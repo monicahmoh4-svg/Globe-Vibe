@@ -1,5 +1,5 @@
-// GlobeVibe — Complete Backend API
-// Deployed as a Vercel Serverless Function
+// GlobeVibe — Backend API (Vercel Serverless)
+// EARNING MODEL: User pays activation fee → earns money per message sent while chatting with foreigners
 import express from 'express';
 import cors    from 'cors';
 import bcrypt  from 'bcryptjs';
@@ -7,76 +7,127 @@ import jwt     from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import axios   from 'axios';
 import pkg     from 'pg';
-
 const { Pool } = pkg;
 
-// ─── DB ─────────────────────────────────────────────────────────────────────
+// ─── DB ──────────────────────────────────────────────────────────────────────
 let _pool, _ready = false;
-const pool = () => { if (!_pool) _pool = new Pool({ connectionString: process.env.POSTGRES_URL, ssl: { rejectUnauthorized: false }, max: 3 }); return _pool; };
-const q    = (sql, p=[]) => pool().query(sql, p).then(r => r.rows);
-const q1   = (sql, p=[]) => q(sql, p).then(r => r[0] || null);
+const pool = () => {
+  if (!_pool) _pool = new Pool({ connectionString: process.env.POSTGRES_URL, ssl: { rejectUnauthorized: false }, max: 3 });
+  return _pool;
+};
+const q  = (sql, p = []) => pool().query(sql, p).then(r => r.rows);
+const q1 = (sql, p = []) => q(sql, p).then(r => r[0] || null);
 
 async function initDB() {
   if (_ready) return;
   await pool().query(`
     CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, password TEXT NOT NULL,
-      country TEXT DEFAULT '', country_code TEXT DEFAULT '', bio TEXT DEFAULT '', avatar TEXT DEFAULT '',
-      balance NUMERIC(12,2) DEFAULT 0, total_earned NUMERIC(12,2) DEFAULT 0,
-      is_online BOOLEAN DEFAULT false, is_foreigner BOOLEAN DEFAULT false,
-      is_banned BOOLEAN DEFAULT false, is_verified BOOLEAN DEFAULT false,
-      rating NUMERIC(3,1) DEFAULT 5.0, total_chats INT DEFAULT 0,
-      language TEXT DEFAULT 'English', interests TEXT DEFAULT '[]',
-      created_at TIMESTAMPTZ DEFAULT NOW(), last_seen TIMESTAMPTZ DEFAULT NOW()
+      id            TEXT PRIMARY KEY,
+      name          TEXT NOT NULL,
+      email         TEXT UNIQUE NOT NULL,
+      password      TEXT NOT NULL,
+      country       TEXT DEFAULT '',
+      country_code  TEXT DEFAULT '',
+      bio           TEXT DEFAULT '',
+      avatar        TEXT DEFAULT '',
+      balance       NUMERIC(12,2) DEFAULT 0,
+      total_earned  NUMERIC(12,2) DEFAULT 0,
+      is_online     BOOLEAN DEFAULT false,
+      is_foreigner  BOOLEAN DEFAULT false,
+      is_banned     BOOLEAN DEFAULT false,
+      is_verified   BOOLEAN DEFAULT false,
+      rating        NUMERIC(3,1) DEFAULT 5.0,
+      total_chats   INT DEFAULT 0,
+      language      TEXT DEFAULT 'English',
+      interests     TEXT DEFAULT '[]',
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      last_seen     TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS admins (
-      id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW()
+      id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS connections (
-      id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-      foreigner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-      payment_status TEXT DEFAULT 'pending', transaction_id TEXT,
-      amount_paid NUMERIC(12,2) DEFAULT 0, status TEXT DEFAULT 'active',
-      expires_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW()
+      id             TEXT PRIMARY KEY,
+      user_id        TEXT REFERENCES users(id) ON DELETE CASCADE,
+      foreigner_id   TEXT REFERENCES users(id) ON DELETE CASCADE,
+      payment_status TEXT DEFAULT 'pending',
+      transaction_id TEXT,
+      amount_paid    NUMERIC(12,2) DEFAULT 0,
+      status         TEXT DEFAULT 'active',
+      expires_at     TIMESTAMPTZ,
+      created_at     TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY, connection_id TEXT REFERENCES connections(id) ON DELETE CASCADE,
-      sender_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-      content TEXT NOT NULL, is_read BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT NOW()
+      id            TEXT PRIMARY KEY,
+      connection_id TEXT REFERENCES connections(id) ON DELETE CASCADE,
+      sender_id     TEXT REFERENCES users(id) ON DELETE CASCADE,
+      content       TEXT NOT NULL,
+      is_read       BOOLEAN DEFAULT false,
+      earned_amount NUMERIC(12,2) DEFAULT 0,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS transactions (
-      id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-      amount NUMERIC(12,2) NOT NULL, phone TEXT, mpesa_ref TEXT, checkout_request_id TEXT,
-      status TEXT DEFAULT 'pending', type TEXT NOT NULL, description TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      id                  TEXT PRIMARY KEY,
+      user_id             TEXT REFERENCES users(id) ON DELETE CASCADE,
+      amount              NUMERIC(12,2) NOT NULL,
+      phone               TEXT,
+      mpesa_ref           TEXT,
+      checkout_request_id TEXT,
+      status              TEXT DEFAULT 'pending',
+      type                TEXT NOT NULL,
+      description         TEXT,
+      created_at          TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS withdrawal_requests (
-      id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-      amount NUMERIC(12,2) NOT NULL, phone TEXT NOT NULL,
-      status TEXT DEFAULT 'pending', admin_note TEXT DEFAULT '',
-      processed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW()
+      id           TEXT PRIMARY KEY,
+      user_id      TEXT REFERENCES users(id) ON DELETE CASCADE,
+      amount       NUMERIC(12,2) NOT NULL,
+      phone        TEXT NOT NULL,
+      status       TEXT DEFAULT 'pending',
+      admin_note   TEXT DEFAULT '',
+      processed_at TIMESTAMPTZ,
+      created_at   TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS platform_settings (
-      key TEXT PRIMARY KEY, value TEXT NOT NULL, description TEXT, updated_at TIMESTAMPTZ DEFAULT NOW()
+      key TEXT PRIMARY KEY, value TEXT NOT NULL,
+      description TEXT, updated_at TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS reports (
-      id TEXT PRIMARY KEY, reporter_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      id TEXT PRIMARY KEY,
+      reporter_id TEXT REFERENCES users(id) ON DELETE CASCADE,
       reported_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-      reason TEXT NOT NULL, description TEXT DEFAULT '', status TEXT DEFAULT 'pending',
+      reason TEXT NOT NULL, description TEXT DEFAULT '',
+      status TEXT DEFAULT 'pending', created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS foreigner_applications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      bio TEXT DEFAULT '', languages TEXT DEFAULT '',
+      motivation TEXT DEFAULT '',
+      status TEXT DEFAULT 'pending',
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 
   // Default settings
   for (const [k,v,d] of [
-    ['connection_fee','100','Connection fee in KES'],
-    ['platform_commission','30','Platform cut %'],
-    ['min_withdrawal','200','Min withdrawal KES'],
-    ['platform_name','GlobeVibe','Site name'],
-    ['maintenance_mode','false','Take site offline'],
-    ['allow_registration','true','Allow signups'],
-    ['chat_duration_hours','24','Hours per connection'],
-  ]) await pool().query(`INSERT INTO platform_settings(key,value,description) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[k,v,d]);
+    ['connection_fee',          '100',   'Activation fee in KES to unlock a chat session'],
+    ['earning_per_message',     '3',     'KES earned by the user per message sent while chatting'],
+    ['platform_commission',     '30',    'Platform cut % from activation fee'],
+    ['min_withdrawal',          '200',   'Minimum wallet withdrawal (KES)'],
+    ['platform_name',           'GlobeVibe', 'Site name'],
+    ['maintenance_mode',        'false', 'Take platform offline'],
+    ['allow_registration',      'true',  'Allow new signups'],
+    ['chat_duration_hours',     '24',    'Hours a paid connection stays active'],
+    ['auto_approve_foreigners', 'true',  'Auto-approve foreigner applications'],
+    ['max_earn_per_session',    '500',   'Max KES a user can earn in one chat session'],
+  ]) {
+    await pool().query(
+      `INSERT INTO platform_settings(key,value,description) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+      [k,v,d]
+    );
+  }
 
   // Default admin
   if (!await q1(`SELECT id FROM admins WHERE username='admin'`)) {
@@ -84,20 +135,20 @@ async function initDB() {
       [uuidv4(),'admin', await bcrypt.hash('GlobeVibe@Admin2024',10)]);
   }
 
-  // Seed foreigners
-  const {rows:[{cnt}]} = await pool().query(`SELECT COUNT(*)::int cnt FROM users WHERE is_foreigner=true`);
+  // Seed demo foreigners (only if zero exist)
+  const [{cnt}] = await q(`SELECT COUNT(*)::int cnt FROM users WHERE is_foreigner=true`);
   if (cnt === 0) {
-    const F = [
-      {name:'Sophie Laurent',   country:'France',  code:'FR', bio:"Bonjour! Art, cuisine and meeting people from around the world — let's chat!", lang:'French, English',  i:'["art","cuisine","travel","photography"]'},
-      {name:"Liam O'Brien",     country:'Ireland', code:'IE', bio:'Dublin native — football, music and good craic. Always up for a chat!',         lang:'English',          i:'["football","music","culture","humor"]'},
-      {name:'Yuki Tanaka',      country:'Japan',   code:'JP', bio:'こんにちは! Japanese culture, anime and sushi facts!',                              lang:'Japanese, English',i:'["anime","sushi","technology","meditation"]'},
-      {name:'Carlos Mendoza',   country:'Mexico',  code:'MX', bio:'Hola! Tacos, history and meeting new amigos from Mexico City!',                   lang:'Spanish, English', i:'["history","food","music","dance"]'},
-      {name:'Amara Osei',       country:'Ghana',   code:'GH', bio:"Ghanaian culture ambassador — let's share stories about our continent!",          lang:'English, Twi',     i:'["culture","music","business","sports"]'},
-      {name:'Emma Johansson',   country:'Sweden',  code:'SE', bio:'Hej! Nordic lifestyle, design and sustainability. Up for deep conversations!',    lang:'Swedish, English', i:'["design","sustainability","hiking","coffee"]'},
-      {name:'Rahul Sharma',     country:'India',   code:'IN', bio:'Namaste from Bangalore! Tech, cricket, Bollywood and curry!',                     lang:'Hindi, English',   i:'["technology","cricket","bollywood","food"]'},
-      {name:'Fatima Al-Hassan', country:'UAE',     code:'AE', bio:'Dubai adventurer — business, fashion and travel are my world!',                   lang:'Arabic, English',  i:'["business","fashion","travel","luxury"]'},
+    const demos = [
+      {name:'Sophie Laurent',   country:'France',  code:'FR', bio:"Bonjour! Art, cuisine and world travel — let's connect!", lang:'French, English',   i:'["art","cuisine","travel","photography"]'},
+      {name:"Liam O'Brien",     country:'Ireland', code:'IE', bio:'Dublin native — football, music, good craic. Chat with me!',lang:'English',           i:'["football","music","culture","humor"]'},
+      {name:'Yuki Tanaka',      country:'Japan',   code:'JP', bio:'Japanese culture, anime and sushi — ask me anything!',    lang:'Japanese, English', i:'["anime","sushi","technology","meditation"]'},
+      {name:'Carlos Mendoza',   country:'Mexico',  code:'MX', bio:'Hola from Mexico City! Tacos, history, new friends.',     lang:'Spanish, English',  i:'["history","food","music","dance"]'},
+      {name:'Amara Osei',       country:'Ghana',   code:'GH', bio:"Ghanaian culture ambassador. Let's share stories!",      lang:'English, Twi',      i:'["culture","music","business","sports"]'},
+      {name:'Emma Johansson',   country:'Sweden',  code:'SE', bio:'Hej! Nordic lifestyle, design and sustainability.',       lang:'Swedish, English',  i:'["design","sustainability","hiking","coffee"]'},
+      {name:'Rahul Sharma',     country:'India',   code:'IN', bio:'Namaste from Bangalore! Tech, cricket, Bollywood.',       lang:'Hindi, English',    i:'["technology","cricket","bollywood","food"]'},
+      {name:'Fatima Al-Hassan', country:'UAE',     code:'AE', bio:'Dubai adventurer — business, fashion and travel.',        lang:'Arabic, English',   i:'["business","fashion","travel","luxury"]'},
     ];
-    for (const f of F) {
+    for (const f of demos) {
       const slug = f.name.toLowerCase().replace(/[^a-z]/g,'');
       await pool().query(
         `INSERT INTO users(id,name,email,password,country,country_code,bio,avatar,language,interests,is_foreigner,is_verified)
@@ -114,13 +165,13 @@ async function initDB() {
 
 const setting = async k => (await q1(`SELECT value FROM platform_settings WHERE key=$1`,[k]))?.value ?? null;
 
-// ─── Auth helpers ───────────────────────────────────────────────────────────
-const JS  = process.env.JWT_SECRET        || 'gv_dev_secret_change_in_prod';
-const AJS = process.env.ADMIN_JWT_SECRET  || 'gv_admin_dev_secret_change_in_prod';
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+const JS  = process.env.JWT_SECRET       || 'gv_dev_secret_change_in_prod';
+const AJS = process.env.ADMIN_JWT_SECRET || 'gv_admin_dev_change_in_prod';
 const signUser  = id => jwt.sign({id}, JS,  {expiresIn:'7d'});
 const signAdmin = id => jwt.sign({id}, AJS, {expiresIn:'8h'});
 
-const authUser = async (req,res,next) => {
+const authUser = async (req, res, next) => {
   const t = req.headers.authorization?.split(' ')[1];
   if (!t) return res.status(401).json({error:'Token required'});
   try {
@@ -132,7 +183,7 @@ const authUser = async (req,res,next) => {
   } catch { res.status(403).json({error:'Invalid token'}); }
 };
 
-const authAdmin = async (req,res,next) => {
+const authAdmin = async (req, res, next) => {
   const t = req.headers.authorization?.split(' ')[1];
   if (!t) return res.status(401).json({error:'Token required'});
   try {
@@ -143,7 +194,7 @@ const authAdmin = async (req,res,next) => {
   } catch { res.status(403).json({error:'Invalid token'}); }
 };
 
-// ─── M-Pesa STK Push (Lipana Technologies) ──────────────────────────────────
+// ─── M-Pesa STK Push ─────────────────────────────────────────────────────────
 async function stkPush(phone, amount, ref, desc) {
   let p = phone.replace(/\D/g,'');
   if (p.startsWith('0'))    p = '254'+p.slice(1);
@@ -152,59 +203,79 @@ async function stkPush(phone, amount, ref, desc) {
   try {
     const r = await axios.post(
       `${process.env.LIPANA_BASE_URL||'https://api.lipanatechnologies.dev'}/v1/stk-push`,
-      { phone:p, amount:Math.ceil(amount), account_reference:ref, transaction_desc:desc,
-        shortcode:process.env.LIPANA_SHORTCODE, passkey:process.env.LIPANA_PASSKEY },
-      { headers:{ Authorization:`Bearer ${process.env.LIPANA_API_KEY}`, 'Content-Type':'application/json' }, timeout:30000 }
+      {phone:p, amount:Math.ceil(amount), account_reference:ref, transaction_desc:desc,
+       shortcode:process.env.LIPANA_SHORTCODE, passkey:process.env.LIPANA_PASSKEY},
+      {headers:{Authorization:`Bearer ${process.env.LIPANA_API_KEY}`,'Content-Type':'application/json'},timeout:30000}
     );
-    return { ok:true, data:r.data };
-  } catch(e) { return { ok:false, error:e.response?.data?.message||'STK Push failed' }; }
+    return {ok:true, data:r.data};
+  } catch(e) { return {ok:false, error:e.response?.data?.message||'STK Push failed'}; }
 }
 
+// ─── PAYMENT COMPLETION ───────────────────────────────────────────────────────
+// The activation fee simply unlocks the chat. The user will earn separately per message.
 async function completePayment(txId, mpesaRef) {
   const tx = await q1(`SELECT * FROM transactions WHERE id=$1`,[txId]);
   if (!tx) return;
+
   await pool().query(`UPDATE transactions SET status='completed',mpesa_ref=$1 WHERE id=$2`,[mpesaRef,txId]);
+
   const cn = await q1(`SELECT * FROM connections WHERE transaction_id=$1`,[txId]);
-  if (cn) {
-    const hrs = parseInt(await setting('chat_duration_hours')||'24');
-    await pool().query(
-      `UPDATE connections SET payment_status='completed',status='active',expires_at=NOW()+($1||' hours')::interval WHERE id=$2`,
-      [String(hrs), cn.id]
-    );
-    const commission = parseFloat(await setting('platform_commission')||'30');
-    const earning = parseFloat(tx.amount)*(1-commission/100);
-    await pool().query(`UPDATE users SET balance=balance+$1,total_earned=total_earned+$1,total_chats=total_chats+1 WHERE id=$2`,[earning,cn.foreigner_id]);
-    await pool().query(
-      `INSERT INTO transactions(id,user_id,amount,status,type,description) VALUES($1,$2,$3,'completed','earning','Chat connection earning')`,
-      [uuidv4(),cn.foreigner_id,earning]
-    );
-  }
+  if (!cn) return;
+
+  const hrs = parseInt(await setting('chat_duration_hours')||'24');
+  await pool().query(
+    `UPDATE connections SET payment_status='completed', status='active',
+     expires_at=NOW()+($1||' hours')::interval WHERE id=$2`,
+    [String(hrs), cn.id]
+  );
+
+  // Track that user has a new chat connection
+  await pool().query(`UPDATE users SET total_chats=total_chats+1 WHERE id=$1`,[cn.user_id]);
+
+  console.log(`✅ Connection ${cn.id} activated — user ${cn.user_id} can now chat and earn`);
 }
 
-// ─── Express ─────────────────────────────────────────────────────────────────
+// ─── Express ──────────────────────────────────────────────────────────────────
 const app = express();
-app.use(cors({ origin:'*' }));
+app.use(cors({origin:'*'}));
 app.use(express.json());
 app.options('*', cors());
+app.use(async (_,__,next)=>{ try{await initDB();}catch(e){console.error('DB:',e.message);} next(); });
 
-// Init DB on every cold-start request
-app.use(async (_,__,next) => { try { await initDB(); } catch(e){ console.error('DB init:',e.message); } next(); });
+app.get('/api/health',(_,res)=>res.json({ok:true,app:'GlobeVibe',ts:new Date()}));
 
-// ── Health ─────────────────────────────────────────────────────────────────
-app.get('/api/health', (_,res) => res.json({ok:true, app:'GlobeVibe', ts:new Date()}));
-
-// ── Auth ────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH
+// ─────────────────────────────────────────────────────────────────────────────
 app.post('/api/auth/register', async (req,res) => {
   try {
-    const { name,email,password,country,country_code='',language='English',bio='' } = req.body;
-    if (!name||!email||!password||!country) return res.status(400).json({error:'Name, email, password and country are required'});
-    if (password.length<6) return res.status(400).json({error:'Password must be at least 6 characters'});
-    if (await q1(`SELECT id FROM users WHERE email=$1`,[email.toLowerCase()])) return res.status(400).json({error:'Email already registered'});
-    const id=uuidv4(), hash=await bcrypt.hash(password,10);
-    const avatar=`https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`;
-    await pool().query(`INSERT INTO users(id,name,email,password,country,country_code,language,bio,avatar) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [id,name,email.toLowerCase(),hash,country,country_code,language,bio,avatar]);
-    const user = await q1(`SELECT id,name,email,country,country_code,bio,avatar,balance,total_earned,is_foreigner,is_verified,language,interests,created_at FROM users WHERE id=$1`,[id]);
+    if (await setting('allow_registration')==='false')
+      return res.status(403).json({error:'Registration currently disabled'});
+
+    const {name,email,password,country,country_code='',language='English',bio='',is_foreigner=false} = req.body;
+    if (!name||!email||!password||!country)
+      return res.status(400).json({error:'Name, email, password and country are required'});
+    if (password.length < 6)
+      return res.status(400).json({error:'Password must be at least 6 characters'});
+    if (await q1(`SELECT id FROM users WHERE email=$1`,[email.toLowerCase()]))
+      return res.status(400).json({error:'Email already registered'});
+
+    const id     = uuidv4();
+    const hash   = await bcrypt.hash(password,10);
+    const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`;
+    const autoApprove = await setting('auto_approve_foreigners') !== 'false';
+    const setForeigner = Boolean(is_foreigner) && autoApprove;
+
+    await pool().query(
+      `INSERT INTO users(id,name,email,password,country,country_code,language,bio,avatar,is_foreigner)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [id,name,email.toLowerCase(),hash,country,country_code,language,bio,avatar,setForeigner]
+    );
+
+    const user = await q1(
+      `SELECT id,name,email,country,country_code,bio,avatar,balance,total_earned,
+              is_foreigner,is_verified,language,interests,created_at FROM users WHERE id=$1`,[id]
+    );
     res.status(201).json({user, token:signUser(id), message:'Welcome to GlobeVibe 🌍'});
   } catch(e){ console.error(e); res.status(500).json({error:'Registration failed'}); }
 });
@@ -214,7 +285,8 @@ app.post('/api/auth/login', async (req,res) => {
     const {email,password} = req.body;
     if (!email||!password) return res.status(400).json({error:'Email and password required'});
     const u = await q1(`SELECT * FROM users WHERE email=$1`,[email.toLowerCase()]);
-    if (!u||!await bcrypt.compare(password,u.password)) return res.status(401).json({error:'Invalid email or password'});
+    if (!u||!await bcrypt.compare(password,u.password))
+      return res.status(401).json({error:'Invalid email or password'});
     if (u.is_banned) return res.status(403).json({error:'Account suspended. Contact support.'});
     await pool().query(`UPDATE users SET is_online=true,last_seen=NOW() WHERE id=$1`,[u.id]);
     const {password:_,...safe} = u;
@@ -228,18 +300,28 @@ app.post('/api/auth/logout', authUser, async (req,res) => {
 });
 
 app.get('/api/auth/me', authUser, async (req,res) => {
-  const user = await q1(`SELECT id,name,email,country,country_code,bio,avatar,balance,total_earned,is_foreigner,is_verified,is_online,language,interests,rating,total_chats,created_at,last_seen FROM users WHERE id=$1`,[req.user.id]);
+  const user = await q1(
+    `SELECT id,name,email,country,country_code,bio,avatar,balance,total_earned,
+            is_foreigner,is_verified,is_online,language,interests,rating,total_chats,
+            created_at,last_seen FROM users WHERE id=$1`,[req.user.id]
+  );
   res.json({user});
 });
 
-// ── Users ──────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// USERS
+// ─────────────────────────────────────────────────────────────────────────────
 app.get('/api/users/foreigners', authUser, async (req,res) => {
   try {
     const {search='',page=1,limit=12} = req.query;
     const like=`%${search}%`, lim=parseInt(limit), off=(parseInt(page)-1)*lim;
-    const [rows, [{cnt}]] = await Promise.all([
-      q(`SELECT id,name,country,country_code,bio,avatar,language,interests,rating,total_chats,is_online,is_verified,last_seen FROM users WHERE is_foreigner=true AND is_banned=false AND(name ILIKE $1 OR bio ILIKE $1 OR country ILIKE $1) ORDER BY is_online DESC,rating DESC LIMIT $2 OFFSET $3`,[like,lim,off]),
-      q(`SELECT COUNT(*)::int cnt FROM users WHERE is_foreigner=true AND is_banned=false AND(name ILIKE $1 OR bio ILIKE $1 OR country ILIKE $1)`,[like]),
+    const [rows,[{cnt}]] = await Promise.all([
+      q(`SELECT id,name,country,country_code,bio,avatar,language,interests,rating,total_chats,is_online,is_verified,last_seen
+         FROM users WHERE is_foreigner=true AND is_banned=false
+         AND(name ILIKE $1 OR bio ILIKE $1 OR country ILIKE $1)
+         ORDER BY is_online DESC,rating DESC LIMIT $2 OFFSET $3`,[like,lim,off]),
+      q(`SELECT COUNT(*)::int cnt FROM users WHERE is_foreigner=true AND is_banned=false
+         AND(name ILIKE $1 OR bio ILIKE $1 OR country ILIKE $1)`,[like]),
     ]);
     res.json({foreigners:rows, total:cnt, page:parseInt(page), totalPages:Math.ceil(cnt/lim)});
   } catch(e){ console.error(e); res.status(500).json({error:'Failed to fetch foreigners'}); }
@@ -248,10 +330,16 @@ app.get('/api/users/foreigners', authUser, async (req,res) => {
 app.get('/api/users/my/connections', authUser, async (req,res) => {
   try {
     const rows = await q(
-      `SELECT c.*,u1.name user_name,u1.avatar user_avatar,u1.country user_country,
-        u2.name foreigner_name,u2.avatar foreigner_avatar,u2.country foreigner_country,u2.country_code foreigner_country_code,u2.is_online foreigner_online
-       FROM connections c JOIN users u1 ON c.user_id=u1.id JOIN users u2 ON c.foreigner_id=u2.id
-       WHERE(c.user_id=$1 OR c.foreigner_id=$1)AND c.payment_status='completed' ORDER BY c.created_at DESC`,[req.user.id]);
+      `SELECT c.*,
+              u1.name user_name, u1.avatar user_avatar, u1.country user_country,
+              u2.name foreigner_name, u2.avatar foreigner_avatar,
+              u2.country foreigner_country, u2.country_code foreigner_country_code,
+              u2.is_online foreigner_online
+       FROM connections c
+       JOIN users u1 ON c.user_id=u1.id JOIN users u2 ON c.foreigner_id=u2.id
+       WHERE (c.user_id=$1 OR c.foreigner_id=$1) AND c.payment_status='completed'
+       ORDER BY c.created_at DESC`,[req.user.id]
+    );
     res.json({connections:rows});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
@@ -263,22 +351,71 @@ app.get('/api/users/my/transactions', authUser, async (req,res) => {
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
 
+// ── Become a foreigner ───────────────────────────────────────────────────────
+app.post('/api/users/become-foreigner', authUser, async (req,res) => {
+  try {
+    // Toggle off
+    if (req.user.is_foreigner) {
+      await pool().query(`UPDATE users SET is_foreigner=false WHERE id=$1`,[req.user.id]);
+      return res.json({message:'You have been removed from the foreigners list.',is_foreigner:false});
+    }
+
+    const {bio='', languages='', motivation=''} = req.body;
+    const autoApprove = await setting('auto_approve_foreigners') !== 'false';
+
+    if (autoApprove) {
+      if (bio) await pool().query(`UPDATE users SET bio=$1 WHERE id=$2`,[bio,req.user.id]);
+      await pool().query(`UPDATE users SET is_foreigner=true WHERE id=$1`,[req.user.id]);
+      await pool().query(
+        `INSERT INTO foreigner_applications(id,user_id,bio,languages,motivation,status)
+         VALUES($1,$2,$3,$4,$5,'approved') ON CONFLICT DO NOTHING`,
+        [uuidv4(),req.user.id,bio,languages,motivation]
+      );
+      return res.json({
+        message:'You are now listed as a foreigner on GlobeVibe! Users can connect and chat with you.',
+        is_foreigner:true, approved:true
+      });
+    }
+
+    // Pending review
+    const existing = await q1(
+      `SELECT id FROM foreigner_applications WHERE user_id=$1 AND status='pending'`,[req.user.id]
+    );
+    if (existing) return res.status(400).json({error:'You already have a pending application.'});
+    await pool().query(
+      `INSERT INTO foreigner_applications(id,user_id,bio,languages,motivation) VALUES($1,$2,$3,$4,$5)`,
+      [uuidv4(),req.user.id,bio,languages,motivation]
+    );
+    res.json({message:'Application submitted! Admin will review shortly.',is_foreigner:false,approved:false});
+  } catch(e){ console.error(e); res.status(500).json({error:'Failed'}); }
+});
+
+// ── Withdrawals ──────────────────────────────────────────────────────────────
 app.post('/api/users/my/withdraw', authUser, async (req,res) => {
   try {
     const {amount,phone} = req.body;
     const minW = parseFloat(await setting('min_withdrawal')||'200');
-    if (!amount||Number(amount)<minW) return res.status(400).json({error:`Minimum withdrawal is KES ${minW}`});
+    if (!amount||Number(amount)<minW)
+      return res.status(400).json({error:`Minimum withdrawal is KES ${minW}`});
     const u = await q1(`SELECT balance FROM users WHERE id=$1`,[req.user.id]);
-    if (parseFloat(u.balance)<Number(amount)) return res.status(400).json({error:'Insufficient balance'});
+    if (parseFloat(u.balance)<Number(amount))
+      return res.status(400).json({error:'Insufficient balance'});
     await pool().query(`UPDATE users SET balance=balance-$1 WHERE id=$2`,[amount,req.user.id]);
-    await pool().query(`INSERT INTO withdrawal_requests(id,user_id,amount,phone) VALUES($1,$2,$3,$4)`,[uuidv4(),req.user.id,amount,phone]);
-    res.json({message:`Withdrawal of KES ${amount} submitted!`});
+    await pool().query(
+      `INSERT INTO withdrawal_requests(id,user_id,amount,phone) VALUES($1,$2,$3,$4)`,
+      [uuidv4(),req.user.id,amount,phone]
+    );
+    res.json({message:`Withdrawal of KES ${amount} submitted! Admin will process shortly.`});
   } catch(e){ console.error(e); res.status(500).json({error:'Failed'}); }
 });
 
 app.get('/api/users/:id', authUser, async (req,res) => {
   try {
-    const u = await q1(`SELECT id,name,country,country_code,bio,avatar,language,interests,rating,total_chats,is_online,is_verified,is_foreigner,created_at,last_seen FROM users WHERE id=$1 AND is_banned=false`,[req.params.id]);
+    const u = await q1(
+      `SELECT id,name,country,country_code,bio,avatar,language,interests,rating,
+              total_chats,is_online,is_verified,is_foreigner,created_at,last_seen
+       FROM users WHERE id=$1 AND is_banned=false`,[req.params.id]
+    );
     if (!u) return res.status(404).json({error:'User not found'});
     res.json({user:u});
   } catch(e){ res.status(500).json({error:'Failed'}); }
@@ -287,19 +424,27 @@ app.get('/api/users/:id', authUser, async (req,res) => {
 app.put('/api/users/profile/update', authUser, async (req,res) => {
   try {
     const {name,bio,language,interests} = req.body;
-    await pool().query(`UPDATE users SET name=$1,bio=$2,language=$3,interests=$4 WHERE id=$5`,
-      [name||req.user.name, bio||'', language||'English', JSON.stringify(interests||[]), req.user.id]);
-    const user = await q1(`SELECT id,name,email,country,country_code,bio,avatar,balance,total_earned,is_foreigner,is_verified,language,interests,rating,total_chats FROM users WHERE id=$1`,[req.user.id]);
-    res.json({user, message:'Profile updated'});
+    await pool().query(
+      `UPDATE users SET name=$1,bio=$2,language=$3,interests=$4 WHERE id=$5`,
+      [name||req.user.name,bio||'',language||'English',JSON.stringify(interests||[]),req.user.id]
+    );
+    const user = await q1(
+      `SELECT id,name,email,country,country_code,bio,avatar,balance,total_earned,
+              is_foreigner,is_verified,language,interests,rating,total_chats FROM users WHERE id=$1`,
+      [req.user.id]
+    );
+    res.json({user,message:'Profile updated'});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
 
 app.put('/api/users/profile/password', authUser, async (req,res) => {
   try {
     const {currentPassword,newPassword} = req.body;
-    if (!await bcrypt.compare(currentPassword,req.user.password)) return res.status(400).json({error:'Current password incorrect'});
+    if (!await bcrypt.compare(currentPassword,req.user.password))
+      return res.status(400).json({error:'Current password incorrect'});
     if ((newPassword||'').length<6) return res.status(400).json({error:'Min 6 characters'});
-    await pool().query(`UPDATE users SET password=$1 WHERE id=$2`,[await bcrypt.hash(newPassword,10),req.user.id]);
+    await pool().query(`UPDATE users SET password=$1 WHERE id=$2`,
+      [await bcrypt.hash(newPassword,10),req.user.id]);
     res.json({message:'Password changed'});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
@@ -307,60 +452,95 @@ app.put('/api/users/profile/password', authUser, async (req,res) => {
 app.post('/api/users/report/:id', authUser, async (req,res) => {
   try {
     const {reason,description=''} = req.body;
-    await pool().query(`INSERT INTO reports(id,reporter_id,reported_id,reason,description) VALUES($1,$2,$3,$4,$5)`,[uuidv4(),req.user.id,req.params.id,reason,description]);
+    await pool().query(
+      `INSERT INTO reports(id,reporter_id,reported_id,reason,description) VALUES($1,$2,$3,$4,$5)`,
+      [uuidv4(),req.user.id,req.params.id,reason,description]
+    );
     res.json({message:'Report submitted'});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
 
-// ── Payments ───────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// PAYMENTS
+// ─────────────────────────────────────────────────────────────────────────────
 app.post('/api/payments/connect', authUser, async (req,res) => {
   try {
     const {foreigner_id,phone} = req.body;
     if (!foreigner_id||!phone) return res.status(400).json({error:'foreigner_id and phone required'});
-    const foreigner = await q1(`SELECT id,name FROM users WHERE id=$1 AND is_foreigner=true AND is_banned=false`,[foreigner_id]);
+    if (foreigner_id===req.user.id) return res.status(400).json({error:'Cannot connect with yourself'});
+
+    const foreigner = await q1(
+      `SELECT id,name FROM users WHERE id=$1 AND is_foreigner=true AND is_banned=false`,[foreigner_id]
+    );
     if (!foreigner) return res.status(404).json({error:'Foreigner not found'});
-    const already = await q1(`SELECT id FROM connections WHERE user_id=$1 AND foreigner_id=$2 AND payment_status='completed' AND status='active' AND expires_at>NOW()`,[req.user.id,foreigner_id]);
-    if (already) return res.status(400).json({error:'Already connected',connection_id:already.id});
 
-    const fee = parseFloat(await setting('connection_fee')||'100');
-    const hrs = parseInt(await setting('chat_duration_hours')||'24');
-    const txId=uuidv4(), cnId=uuidv4(), ref=`GV-${cnId.slice(0,8).toUpperCase()}`;
+    const existing = await q1(
+      `SELECT id FROM connections WHERE user_id=$1 AND foreigner_id=$2
+       AND payment_status='completed' AND status='active' AND expires_at>NOW()`,
+      [req.user.id,foreigner_id]
+    );
+    if (existing) return res.status(400).json({error:'Already connected',connection_id:existing.id});
 
-    await pool().query(`INSERT INTO transactions(id,user_id,amount,phone,type,description) VALUES($1,$2,$3,$4,'connection_payment',$5)`,
-      [txId,req.user.id,fee,phone,`Connect with ${foreigner.name}`]);
-    await pool().query(`INSERT INTO connections(id,user_id,foreigner_id,payment_status,transaction_id,amount_paid,expires_at) VALUES($1,$2,$3,'pending',$4,$5,NOW()+($6||' hours')::interval)`,
-      [cnId,req.user.id,foreigner_id,txId,fee,String(hrs)]);
+    const fee  = parseFloat(await setting('connection_fee')||'100');
+    const hrs  = parseInt(await setting('chat_duration_hours')||'24');
+    const txId = uuidv4(), cnId = uuidv4();
+    const ref  = `GV-${cnId.slice(0,8).toUpperCase()}`;
+
+    await pool().query(
+      `INSERT INTO transactions(id,user_id,amount,phone,type,description)
+       VALUES($1,$2,$3,$4,'activation_fee',$5)`,
+      [txId,req.user.id,fee,phone,`Activation fee — chat with ${foreigner.name}`]
+    );
+    await pool().query(
+      `INSERT INTO connections(id,user_id,foreigner_id,payment_status,transaction_id,amount_paid,expires_at)
+       VALUES($1,$2,$3,'pending',$4,$5,NOW()+($6||' hours')::interval)`,
+      [cnId,req.user.id,foreigner_id,txId,fee,String(hrs)]
+    );
 
     if (process.env.LIPANA_API_KEY) {
-      const r = await stkPush(phone,fee,ref,`GlobeVibe – Chat with ${foreigner.name}`);
+      const r = await stkPush(phone,fee,ref,`GlobeVibe — Chat with ${foreigner.name}`);
       if (r.ok) {
         const cid = r.data?.CheckoutRequestID||r.data?.checkout_request_id;
-        if (cid) await pool().query(`UPDATE transactions SET checkout_request_id=$1,mpesa_ref=$1 WHERE id=$2`,[cid,txId]);
-        return res.json({success:true,message:`STK Push sent to ${phone}. Enter your M-Pesa PIN.`,transaction_id:txId,connection_id:cnId,amount:fee});
+        if (cid) await pool().query(
+          `UPDATE transactions SET checkout_request_id=$1,mpesa_ref=$1 WHERE id=$2`,[cid,txId]
+        );
+        return res.json({
+          success:true,
+          message:`STK Push sent to ${phone}. Enter your M-Pesa PIN to activate chat.`,
+          transaction_id:txId, connection_id:cnId, amount:fee
+        });
       }
       await pool().query(`UPDATE transactions SET status='failed' WHERE id=$1`,[txId]);
       await pool().query(`UPDATE connections SET payment_status='failed' WHERE id=$1`,[cnId]);
       return res.status(400).json({error:r.error});
     }
-    // Demo mode (no LIPANA_API_KEY configured)
-    res.json({success:true,demo:true,message:`[Demo] Payment of KES ${fee} simulated.`,transaction_id:txId,connection_id:cnId,amount:fee});
+
+    // Demo mode
+    res.json({
+      success:true, demo:true,
+      message:`[Demo] Activation fee of KES ${fee} simulated. Confirm to start chatting and earning!`,
+      transaction_id:txId, connection_id:cnId, amount:fee
+    });
   } catch(e){ console.error(e); res.status(500).json({error:'Payment initiation failed'}); }
 });
 
 app.post('/api/payments/demo-confirm/:txId', authUser, async (req,res) => {
   try {
-    if (process.env.LIPANA_API_KEY) return res.status(403).json({error:'Not available in production'});
-    const tx = await q1(`SELECT * FROM transactions WHERE id=$1 AND user_id=$2`,[req.params.txId,req.user.id]);
+    if (process.env.LIPANA_API_KEY)
+      return res.status(403).json({error:'Not available in production'});
+    const tx = await q1(`SELECT * FROM transactions WHERE id=$1 AND user_id=$2`,
+      [req.params.txId,req.user.id]);
     if (!tx) return res.status(404).json({error:'Not found'});
     if (tx.status==='completed') return res.json({success:true});
     await completePayment(tx.id,'DEMO-'+Date.now());
-    res.json({success:true,message:'Connected! 🎉'});
+    res.json({success:true, message:'Chat activated! Start messaging to earn money 💰'});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
 
 app.get('/api/payments/status/:txId', authUser, async (req,res) => {
   try {
-    const tx = await q1(`SELECT * FROM transactions WHERE id=$1 AND user_id=$2`,[req.params.txId,req.user.id]);
+    const tx = await q1(`SELECT * FROM transactions WHERE id=$1 AND user_id=$2`,
+      [req.params.txId,req.user.id]);
     if (!tx) return res.status(404).json({error:'Not found'});
     const cn = await q1(`SELECT * FROM connections WHERE transaction_id=$1`,[tx.id]);
     res.json({transaction:tx,connection:cn});
@@ -389,48 +569,152 @@ app.post('/api/payments/callback', async (req,res) => {
   res.json({ResultCode:0,ResultDesc:'Accepted'});
 });
 
-// ── Messages (polling-based, works on serverless) ──────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MESSAGES — USER EARNS PER MESSAGE SENT
+// ─────────────────────────────────────────────────────────────────────────────
 app.get('/api/messages/:connId', authUser, async (req,res) => {
   try {
-    const {connId} = req.params, {since} = req.query;
-    const cn = await q1(`SELECT * FROM connections WHERE id=$1 AND(user_id=$2 OR foreigner_id=$2) AND payment_status='completed'`,[connId,req.user.id]);
+    const {connId} = req.params;
+    const {since}  = req.query;
+    const cn = await q1(
+      `SELECT * FROM connections WHERE id=$1 AND (user_id=$2 OR foreigner_id=$2) AND payment_status='completed'`,
+      [connId,req.user.id]
+    );
     if (!cn) return res.status(403).json({error:'Not authorized'});
+
     const msgs = since
-      ? await q(`SELECT m.*,u.name sender_name,u.avatar sender_avatar FROM messages m JOIN users u ON m.sender_id=u.id WHERE m.connection_id=$1 AND m.created_at>$2::timestamptz ORDER BY m.created_at ASC`,[connId,since])
-      : await q(`SELECT m.*,u.name sender_name,u.avatar sender_avatar FROM messages m JOIN users u ON m.sender_id=u.id WHERE m.connection_id=$1 ORDER BY m.created_at ASC LIMIT 100`,[connId]);
-    await pool().query(`UPDATE messages SET is_read=true WHERE connection_id=$1 AND sender_id!=$2 AND is_read=false`,[connId,req.user.id]);
+      ? await q(
+          `SELECT m.*,u.name sender_name,u.avatar sender_avatar
+           FROM messages m JOIN users u ON m.sender_id=u.id
+           WHERE m.connection_id=$1 AND m.created_at>$2::timestamptz ORDER BY m.created_at ASC`,
+          [connId,since]
+        )
+      : await q(
+          `SELECT m.*,u.name sender_name,u.avatar sender_avatar
+           FROM messages m JOIN users u ON m.sender_id=u.id
+           WHERE m.connection_id=$1 ORDER BY m.created_at ASC LIMIT 100`,
+          [connId]
+        );
+
+    await pool().query(
+      `UPDATE messages SET is_read=true WHERE connection_id=$1 AND sender_id!=$2 AND is_read=false`,
+      [connId,req.user.id]
+    );
     res.json({messages:msgs, connection:cn});
   } catch(e){ console.error(e); res.status(500).json({error:'Failed to fetch messages'}); }
 });
 
 app.post('/api/messages/:connId', authUser, async (req,res) => {
   try {
-    const {connId} = req.params, {content} = req.body;
+    const {connId}  = req.params;
+    const {content} = req.body;
     if (!content?.trim()||content.length>1000) return res.status(400).json({error:'Invalid message'});
-    const cn = await q1(`SELECT * FROM connections WHERE id=$1 AND(user_id=$2 OR foreigner_id=$2) AND payment_status='completed' AND status='active'`,[connId,req.user.id]);
+
+    const cn = await q1(
+      `SELECT * FROM connections WHERE id=$1 AND (user_id=$2 OR foreigner_id=$2)
+       AND payment_status='completed' AND status='active'`,
+      [connId,req.user.id]
+    );
     if (!cn) return res.status(403).json({error:'Not authorized or connection expired'});
-    if (cn.expires_at && new Date(cn.expires_at)<new Date()) return res.status(400).json({error:'Connection expired'});
-    const id=uuidv4();
-    await pool().query(`INSERT INTO messages(id,connection_id,sender_id,content) VALUES($1,$2,$3,$4)`,[id,connId,req.user.id,content.trim()]);
-    const msg = await q1(`SELECT m.*,u.name sender_name,u.avatar sender_avatar FROM messages m JOIN users u ON m.sender_id=u.id WHERE m.id=$1`,[id]);
-    res.status(201).json({message:msg});
+    if (cn.expires_at && new Date(cn.expires_at)<new Date())
+      return res.status(400).json({error:'Connection has expired'});
+
+    // ── EARNING LOGIC ─────────────────────────────────────────────────────────
+    // Only the user who PAID (cn.user_id) earns per message they send
+    let earned = 0;
+    const isPayingUser = req.user.id === cn.user_id;
+
+    if (isPayingUser) {
+      const earnPerMsg   = parseFloat(await setting('earning_per_message')||'3');
+      const maxPerSession= parseFloat(await setting('max_earn_per_session')||'500');
+
+      // Check how much the user has already earned in this session
+      const [{session_earned}] = await q(
+        `SELECT COALESCE(SUM(earned_amount),0)::float session_earned
+         FROM messages WHERE connection_id=$1 AND sender_id=$2`,
+        [connId,req.user.id]
+      );
+
+      if (parseFloat(session_earned) < maxPerSession) {
+        earned = Math.min(earnPerMsg, maxPerSession - parseFloat(session_earned));
+        earned = parseFloat(earned.toFixed(2));
+
+        // Credit the user's wallet
+        await pool().query(
+          `UPDATE users SET balance=balance+$1, total_earned=total_earned+$1 WHERE id=$2`,
+          [earned,req.user.id]
+        );
+
+        // Record earning transaction (batch: only create one per 10 messages to avoid spam)
+        const [{msg_count}] = await q(
+          `SELECT COUNT(*)::int msg_count FROM messages WHERE connection_id=$1 AND sender_id=$2`,
+          [connId,req.user.id]
+        );
+        if (msg_count % 10 === 0 || session_earned === 0) {
+          await pool().query(
+            `INSERT INTO transactions(id,user_id,amount,status,type,description)
+             VALUES($1,$2,$3,'completed','chat_earning',$4)`,
+            [uuidv4(),req.user.id,earned,`Chat earning — ${Math.round(session_earned+earned)} KES total from this session`]
+          );
+        }
+      }
+    }
+
+    // Save the message
+    const id = uuidv4();
+    await pool().query(
+      `INSERT INTO messages(id,connection_id,sender_id,content,earned_amount) VALUES($1,$2,$3,$4,$5)`,
+      [id,connId,req.user.id,content.trim(),earned]
+    );
+
+    const msg = await q1(
+      `SELECT m.*,u.name sender_name,u.avatar sender_avatar
+       FROM messages m JOIN users u ON m.sender_id=u.id WHERE m.id=$1`,[id]
+    );
+
+    res.status(201).json({
+      message:msg,
+      earned,                         // KES earned for this message
+      is_earning: isPayingUser,        // flag so frontend knows to show earning toast
+    });
   } catch(e){ console.error(e); res.status(500).json({error:'Failed to send'}); }
 });
 
 app.get('/api/messages/unread/count', authUser, async (req,res) => {
   try {
-    const [{cnt}] = await q(`SELECT COUNT(*)::int cnt FROM messages m JOIN connections c ON m.connection_id=c.id WHERE(c.user_id=$1 OR c.foreigner_id=$1)AND m.sender_id!=$1 AND m.is_read=false`,[req.user.id]);
+    const [{cnt}] = await q(
+      `SELECT COUNT(*)::int cnt FROM messages m JOIN connections c ON m.connection_id=c.id
+       WHERE (c.user_id=$1 OR c.foreigner_id=$1) AND m.sender_id!=$1 AND m.is_read=false`,
+      [req.user.id]
+    );
     res.json({unread:cnt});
   } catch(e){ res.json({unread:0}); }
 });
 
-// ── Admin ──────────────────────────────────────────────────────────────────
+// Session stats (total earned in a connection)
+app.get('/api/messages/:connId/stats', authUser, async (req,res) => {
+  try {
+    const [{session_earned, msg_count}] = await q(
+      `SELECT COALESCE(SUM(earned_amount),0)::float session_earned, COUNT(*)::int msg_count
+       FROM messages WHERE connection_id=$1 AND sender_id=$2`,
+      [req.params.connId,req.user.id]
+    );
+    const maxPerSession = parseFloat(await setting('max_earn_per_session')||'500');
+    const earnPerMsg    = parseFloat(await setting('earning_per_message')||'3');
+    res.json({session_earned, msg_count, max_earn_per_session:maxPerSession, earn_per_message:earnPerMsg});
+  } catch(e){ res.json({session_earned:0,msg_count:0}); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN
+// ─────────────────────────────────────────────────────────────────────────────
 app.post('/api/admin/login', async (req,res) => {
   try {
     const {username,password} = req.body;
     const a = await q1(`SELECT * FROM admins WHERE username=$1`,[username]);
-    if (!a||!await bcrypt.compare(password,a.password)) return res.status(401).json({error:'Invalid credentials'});
-    res.json({token:signAdmin(a.id), admin:{id:a.id,username:a.username}});
+    if (!a||!await bcrypt.compare(password,a.password))
+      return res.status(401).json({error:'Invalid credentials'});
+    res.json({token:signAdmin(a.id),admin:{id:a.id,username:a.username}});
   } catch(e){ res.status(500).json({error:'Login failed'}); }
 });
 
@@ -443,28 +727,47 @@ app.get('/api/admin/stats', authAdmin, async (req,res) => {
       q1(`SELECT COUNT(*)::int v FROM users WHERE is_banned=true`),
       q1(`SELECT COUNT(*)::int v FROM connections WHERE payment_status='completed'`),
       q1(`SELECT COUNT(*)::int v FROM messages`),
-      q1(`SELECT COALESCE(SUM(amount),0)::float v FROM transactions WHERE status='completed' AND type='connection_payment'`),
+      q1(`SELECT COALESCE(SUM(amount),0)::float v FROM transactions WHERE status='completed' AND type='activation_fee'`),
       q1(`SELECT COUNT(*)::int v FROM withdrawal_requests WHERE status='pending'`),
       q1(`SELECT COALESCE(SUM(amount),0)::float v FROM withdrawal_requests WHERE status='pending'`),
       q1(`SELECT COUNT(*)::int v FROM reports WHERE status='pending'`),
+      q1(`SELECT COALESCE(SUM(amount),0)::float v FROM transactions WHERE status='completed' AND type='chat_earning'`),
     ]);
-    const [tu,tf,on,ban,conn,msg,rev,pw,pwa,rep] = results.map(r=>r.v);
-    const revenueByDay = await q(`SELECT DATE(created_at) day,COALESCE(SUM(amount),0)::float revenue FROM transactions WHERE status='completed' AND type='connection_payment' AND created_at>=NOW()-INTERVAL '7 days' GROUP BY day ORDER BY day ASC`);
-    const recentTransactions = await q(`SELECT t.*,u.name user_name FROM transactions t JOIN users u ON t.user_id=u.id ORDER BY t.created_at DESC LIMIT 10`);
-    res.json({stats:{totalUsers:tu,totalForeigners:tf,onlineUsers:on,bannedUsers:ban,totalConnections:conn,totalMessages:msg,totalRevenue:rev,pendingWithdrawals:pw,pendingWithdrawalAmount:pwa,pendingReports:rep},revenueByDay,recentTransactions});
+    const [tu,tf,on,ban,conn,msg,rev,pw,pwa,rep,totalPaidOut] = results.map(r=>r.v);
+    const revenueByDay = await q(
+      `SELECT DATE(created_at) day, COALESCE(SUM(amount),0)::float revenue
+       FROM transactions WHERE status='completed' AND type='activation_fee'
+       AND created_at>=NOW()-INTERVAL '7 days' GROUP BY day ORDER BY day ASC`
+    );
+    const recentTransactions = await q(
+      `SELECT t.*,u.name user_name FROM transactions t JOIN users u ON t.user_id=u.id
+       ORDER BY t.created_at DESC LIMIT 10`
+    );
+    res.json({
+      stats:{totalUsers:tu,totalForeigners:tf,onlineUsers:on,bannedUsers:ban,
+             totalConnections:conn,totalMessages:msg,totalRevenue:rev,
+             pendingWithdrawals:pw,pendingWithdrawalAmount:pwa,pendingReports:rep,totalPaidOut},
+      revenueByDay,recentTransactions
+    });
   } catch(e){ console.error(e); res.status(500).json({error:'Failed'}); }
 });
 
 app.get('/api/admin/users', authAdmin, async (req,res) => {
   try {
     const {page=1,limit=20,search='',type,status} = req.query;
-    const like=`%${search}%`; let where=`name ILIKE $1 OR email ILIKE $1 OR country ILIKE $1`; const p=[like];
+    const like=`%${search}%`; let where=`(name ILIKE $1 OR email ILIKE $1 OR country ILIKE $1)`; const p=[like];
     if (type==='foreigner') where=`(${where}) AND is_foreigner=true`;
     else if (type==='user') where=`(${where}) AND is_foreigner=false`;
-    if (status==='banned') where=`(${where}) AND is_banned=true`;
+    if (status==='banned')  where=`(${where}) AND is_banned=true`;
     else if (status==='active') where=`(${where}) AND is_banned=false`;
     const [{cnt}] = await q(`SELECT COUNT(*)::int cnt FROM users WHERE ${where}`,p);
-    const rows = await q(`SELECT id,name,email,country,country_code,is_foreigner,is_banned,is_verified,is_online,balance,total_earned,total_chats,created_at FROM users WHERE ${where} ORDER BY created_at DESC LIMIT $${p.length+1} OFFSET $${p.length+2}`,[...p,parseInt(limit),(parseInt(page)-1)*parseInt(limit)]);
+    const rows = await q(
+      `SELECT id,name,email,country,country_code,is_foreigner,is_banned,is_verified,
+              is_online,balance,total_earned,total_chats,created_at FROM users
+       WHERE ${where} ORDER BY created_at DESC
+       LIMIT $${p.length+1} OFFSET $${p.length+2}`,
+      [...p,parseInt(limit),(parseInt(page)-1)*parseInt(limit)]
+    );
     res.json({users:rows,total:cnt,page:parseInt(page),totalPages:Math.ceil(cnt/parseInt(limit))});
   } catch(e){ console.error(e); res.status(500).json({error:'Failed'}); }
 });
@@ -472,7 +775,7 @@ app.get('/api/admin/users', authAdmin, async (req,res) => {
 app.put('/api/admin/users/:id/ban', authAdmin, async (req,res) => {
   try {
     const u=await q1(`SELECT is_banned FROM users WHERE id=$1`,[req.params.id]);
-    if(!u) return res.status(404).json({error:'Not found'});
+    if (!u) return res.status(404).json({error:'Not found'});
     await pool().query(`UPDATE users SET is_banned=$1 WHERE id=$2`,[!u.is_banned,req.params.id]);
     res.json({message:u.is_banned?'User unbanned':'User banned',banned:!u.is_banned});
   } catch(e){ res.status(500).json({error:'Failed'}); }
@@ -481,7 +784,7 @@ app.put('/api/admin/users/:id/ban', authAdmin, async (req,res) => {
 app.put('/api/admin/users/:id/verify', authAdmin, async (req,res) => {
   try {
     const u=await q1(`SELECT is_verified FROM users WHERE id=$1`,[req.params.id]);
-    if(!u) return res.status(404).json({error:'Not found'});
+    if (!u) return res.status(404).json({error:'Not found'});
     await pool().query(`UPDATE users SET is_verified=$1 WHERE id=$2`,[!u.is_verified,req.params.id]);
     res.json({message:u.is_verified?'Verification removed':'User verified'});
   } catch(e){ res.status(500).json({error:'Failed'}); }
@@ -490,7 +793,7 @@ app.put('/api/admin/users/:id/verify', authAdmin, async (req,res) => {
 app.put('/api/admin/users/:id/toggle-foreigner', authAdmin, async (req,res) => {
   try {
     const u=await q1(`SELECT is_foreigner FROM users WHERE id=$1`,[req.params.id]);
-    if(!u) return res.status(404).json({error:'Not found'});
+    if (!u) return res.status(404).json({error:'Not found'});
     await pool().query(`UPDATE users SET is_foreigner=$1 WHERE id=$2`,[!u.is_foreigner,req.params.id]);
     res.json({message:u.is_foreigner?'Removed from foreigners':'Made foreigner'});
   } catch(e){ res.status(500).json({error:'Failed'}); }
@@ -504,23 +807,56 @@ app.delete('/api/admin/users/:id', authAdmin, async (req,res) => {
 app.post('/api/admin/users/add-foreigner', authAdmin, async (req,res) => {
   try {
     const {name,email,country,country_code='',bio='',language='English'} = req.body;
-    if(!name||!email||!country) return res.status(400).json({error:'name, email, country required'});
-    if(await q1(`SELECT id FROM users WHERE email=$1`,[email])) return res.status(400).json({error:'Email exists'});
-    const id=uuidv4(), pwd=await bcrypt.hash('password123',10);
+    if (!name||!email||!country) return res.status(400).json({error:'name, email, country required'});
+    if (await q1(`SELECT id FROM users WHERE email=$1`,[email]))
+      return res.status(400).json({error:'Email exists'});
+    const id=uuidv4();
     const avatar=`https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`;
-    await pool().query(`INSERT INTO users(id,name,email,password,country,country_code,bio,avatar,language,is_foreigner,is_verified) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,true,true)`,[id,name,email,pwd,country,country_code,bio,avatar,language]);
+    await pool().query(
+      `INSERT INTO users(id,name,email,password,country,country_code,bio,avatar,language,is_foreigner,is_verified)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,true,true)`,
+      [id,name,email,await bcrypt.hash('password123',10),country,country_code,bio,avatar,language]
+    );
     res.json({message:'Foreigner added',id});
+  } catch(e){ res.status(500).json({error:'Failed'}); }
+});
+
+// Foreigner applications
+app.get('/api/admin/foreigner-applications', authAdmin, async (req,res) => {
+  try {
+    const rows = await q(
+      `SELECT fa.*,u.name user_name,u.email user_email,u.country user_country
+       FROM foreigner_applications fa JOIN users u ON fa.user_id=u.id
+       WHERE fa.status='pending' ORDER BY fa.created_at DESC`
+    );
+    res.json({applications:rows});
+  } catch(e){ res.status(500).json({error:'Failed'}); }
+});
+
+app.put('/api/admin/foreigner-applications/:id', authAdmin, async (req,res) => {
+  try {
+    const {status} = req.body;
+    const appl = await q1(`SELECT * FROM foreigner_applications WHERE id=$1`,[req.params.id]);
+    if (!appl) return res.status(404).json({error:'Not found'});
+    await pool().query(`UPDATE foreigner_applications SET status=$1 WHERE id=$2`,[status,req.params.id]);
+    if (status==='approved')
+      await pool().query(`UPDATE users SET is_foreigner=true WHERE id=$1`,[appl.user_id]);
+    res.json({message:`Application ${status}`});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
 
 app.get('/api/admin/transactions', authAdmin, async (req,res) => {
   try {
-    const {page=1,limit=20,status,type} = req.query;
+    const {page=1,limit=20,status,type}=req.query;
     const p=[]; let w='1=1';
-    if(status){p.push(status);w+=` AND t.status=$${p.length}`;}
-    if(type){p.push(type);w+=` AND t.type=$${p.length}`;}
+    if (status){p.push(status);w+=` AND t.status=$${p.length}`;}
+    if (type)  {p.push(type);  w+=` AND t.type=$${p.length}`;}
     const [{cnt}]=await q(`SELECT COUNT(*)::int cnt FROM transactions t JOIN users u ON t.user_id=u.id WHERE ${w}`,p);
-    const rows=await q(`SELECT t.*,u.name user_name,u.email user_email FROM transactions t JOIN users u ON t.user_id=u.id WHERE ${w} ORDER BY t.created_at DESC LIMIT $${p.length+1} OFFSET $${p.length+2}`,[...p,parseInt(limit),(parseInt(page)-1)*parseInt(limit)]);
+    const rows=await q(
+      `SELECT t.*,u.name user_name,u.email user_email FROM transactions t JOIN users u ON t.user_id=u.id
+       WHERE ${w} ORDER BY t.created_at DESC LIMIT $${p.length+1} OFFSET $${p.length+2}`,
+      [...p,parseInt(limit),(parseInt(page)-1)*parseInt(limit)]
+    );
     res.json({transactions:rows,total:cnt,page:parseInt(page),totalPages:Math.ceil(cnt/parseInt(limit))});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
@@ -528,8 +864,11 @@ app.get('/api/admin/transactions', authAdmin, async (req,res) => {
 app.get('/api/admin/withdrawals', authAdmin, async (req,res) => {
   try {
     const {status}=req.query; const p=[]; let w='1=1';
-    if(status){p.push(status);w=`w.status=$1`;}
-    const rows=await q(`SELECT w.*,u.name user_name,u.email user_email FROM withdrawal_requests w JOIN users u ON w.user_id=u.id WHERE ${w} ORDER BY w.created_at DESC`,p);
+    if (status){p.push(status);w=`w.status=$1`;}
+    const rows=await q(
+      `SELECT w.*,u.name user_name,u.email user_email FROM withdrawal_requests w
+       JOIN users u ON w.user_id=u.id WHERE ${w} ORDER BY w.created_at DESC`,p
+    );
     res.json({withdrawals:rows});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
@@ -538,23 +877,31 @@ app.put('/api/admin/withdrawals/:id', authAdmin, async (req,res) => {
   try {
     const {status,admin_note=''}=req.body;
     const w=await q1(`SELECT * FROM withdrawal_requests WHERE id=$1`,[req.params.id]);
-    if(!w) return res.status(404).json({error:'Not found'});
-    await pool().query(`UPDATE withdrawal_requests SET status=$1,admin_note=$2,processed_at=NOW() WHERE id=$3`,[status,admin_note,req.params.id]);
-    if(status==='rejected') await pool().query(`UPDATE users SET balance=balance+$1 WHERE id=$2`,[w.amount,w.user_id]);
+    if (!w) return res.status(404).json({error:'Not found'});
+    await pool().query(`UPDATE withdrawal_requests SET status=$1,admin_note=$2,processed_at=NOW() WHERE id=$3`,
+      [status,admin_note,req.params.id]);
+    if (status==='rejected')
+      await pool().query(`UPDATE users SET balance=balance+$1 WHERE id=$2`,[w.amount,w.user_id]);
     res.json({message:`Withdrawal ${status}`});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
 
 app.get('/api/admin/reports', authAdmin, async (req,res) => {
   try {
-    const rows=await q(`SELECT r.*,u1.name reporter_name,u1.email reporter_email,u2.name reported_name,u2.email reported_email FROM reports r JOIN users u1 ON r.reporter_id=u1.id JOIN users u2 ON r.reported_id=u2.id ORDER BY r.created_at DESC`);
+    const rows=await q(
+      `SELECT r.*,u1.name reporter_name,u1.email reporter_email,u2.name reported_name,u2.email reported_email
+       FROM reports r JOIN users u1 ON r.reporter_id=u1.id JOIN users u2 ON r.reported_id=u2.id
+       ORDER BY r.created_at DESC`
+    );
     res.json({reports:rows});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
 
 app.put('/api/admin/reports/:id', authAdmin, async (req,res) => {
-  try { await pool().query(`UPDATE reports SET status=$1 WHERE id=$2`,[req.body.status,req.params.id]); res.json({message:'Updated'}); }
-  catch(e){ res.status(500).json({error:'Failed'}); }
+  try {
+    await pool().query(`UPDATE reports SET status=$1 WHERE id=$2`,[req.body.status,req.params.id]);
+    res.json({message:'Updated'});
+  } catch(e){ res.status(500).json({error:'Failed'}); }
 });
 
 app.get('/api/admin/settings', authAdmin, async (req,res) => {
@@ -564,7 +911,8 @@ app.get('/api/admin/settings', authAdmin, async (req,res) => {
 
 app.put('/api/admin/settings', authAdmin, async (req,res) => {
   try {
-    for(const s of req.body.settings) await pool().query(`UPDATE platform_settings SET value=$1,updated_at=NOW() WHERE key=$2`,[s.value,s.key]);
+    for (const s of req.body.settings)
+      await pool().query(`UPDATE platform_settings SET value=$1,updated_at=NOW() WHERE key=$2`,[s.value,s.key]);
     res.json({message:'Settings saved'});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
@@ -573,17 +921,39 @@ app.get('/api/admin/connections', authAdmin, async (req,res) => {
   try {
     const {page=1,limit=20}=req.query;
     const [{cnt}]=await q(`SELECT COUNT(*)::int cnt FROM connections`);
-    const rows=await q(`SELECT c.*,u1.name user_name,u1.email user_email,u2.name foreigner_name,u2.country foreigner_country,(SELECT COUNT(*)::int FROM messages WHERE connection_id=c.id) message_count FROM connections c JOIN users u1 ON c.user_id=u1.id JOIN users u2 ON c.foreigner_id=u2.id ORDER BY c.created_at DESC LIMIT $1 OFFSET $2`,[parseInt(limit),(parseInt(page)-1)*parseInt(limit)]);
+    const rows=await q(
+      `SELECT c.*,u1.name user_name,u1.email user_email,u2.name foreigner_name,u2.country foreigner_country,
+              (SELECT COUNT(*)::int FROM messages WHERE connection_id=c.id) message_count,
+              (SELECT COALESCE(SUM(earned_amount),0)::float FROM messages WHERE connection_id=c.id AND sender_id=c.user_id) user_earned
+       FROM connections c JOIN users u1 ON c.user_id=u1.id JOIN users u2 ON c.foreigner_id=u2.id
+       ORDER BY c.created_at DESC LIMIT $1 OFFSET $2`,
+      [parseInt(limit),(parseInt(page)-1)*parseInt(limit)]
+    );
     res.json({connections:rows,total:cnt});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
 
 app.get('/api/admin/connections/:id/messages', authAdmin, async (req,res) => {
   try {
-    const rows=await q(`SELECT m.*,u.name sender_name FROM messages m JOIN users u ON m.sender_id=u.id WHERE m.connection_id=$1 ORDER BY m.created_at ASC`,[req.params.id]);
+    const rows=await q(
+      `SELECT m.*,u.name sender_name FROM messages m JOIN users u ON m.sender_id=u.id
+       WHERE m.connection_id=$1 ORDER BY m.created_at ASC`,[req.params.id]
+    );
     res.json({messages:rows});
   } catch(e){ res.status(500).json({error:'Failed'}); }
 });
 
-// Export for Vercel
+
+// Public settings (fee + earn rate shown to unauthenticated users)
+app.get('/api/public/settings', async (_,res) => {
+  try {
+    const [fee, earnPerMsg, minWithdrawal] = await Promise.all([
+      setting('connection_fee'),
+      setting('earning_per_message'),
+      setting('min_withdrawal'),
+    ])
+    res.json({ fee: parseFloat(fee||'100'), earn_per_message: parseFloat(earnPerMsg||'3'), min_withdrawal: parseFloat(minWithdrawal||'200') })
+  } catch(e) { res.json({ fee:100, earn_per_message:3, min_withdrawal:200 }) }
+})
+
 export default app;
