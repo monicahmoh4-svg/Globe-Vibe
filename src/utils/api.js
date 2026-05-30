@@ -2,8 +2,8 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: '/api', timeout: 30000 })
 
-const t = localStorage.getItem('gv_token')
-if (t) api.defaults.headers.common['Authorization'] = `Bearer ${t}`
+const tok = localStorage.getItem('gv_token')
+if (tok) api.defaults.headers.common['Authorization'] = `Bearer ${tok}`
 
 api.interceptors.response.use(
   r => r,
@@ -11,7 +11,8 @@ api.interceptors.response.use(
     if (err.response?.status === 401) {
       localStorage.removeItem('gv_token')
       delete api.defaults.headers.common['Authorization']
-      if (!window.location.pathname.includes('/login') && !window.location.pathname.startsWith('/admin')) {
+      if (!window.location.pathname.includes('/login') &&
+          !window.location.pathname.startsWith('/admin')) {
         window.location.href = '/login'
       }
     }
