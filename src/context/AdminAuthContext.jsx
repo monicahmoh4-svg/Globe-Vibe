@@ -5,7 +5,7 @@ const Ctx = createContext(null)
 export const adminApi = axios.create({ baseURL: '/api' })
 
 export function AdminAuthProvider({ children }) {
-  const [admin, setAdmin]     = useState(null)
+  const [admin,   setAdmin]   = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -14,9 +14,14 @@ export function AdminAuthProvider({ children }) {
       adminApi.defaults.headers.common['Authorization'] = `Bearer ${tok}`
       adminApi.get('/admin/stats')
         .then(() => setAdmin({ token: tok }))
-        .catch(() => { localStorage.removeItem('gv_admin_token'); delete adminApi.defaults.headers.common['Authorization'] })
+        .catch(() => {
+          localStorage.removeItem('gv_admin_token')
+          delete adminApi.defaults.headers.common['Authorization']
+        })
         .finally(() => setLoading(false))
-    } else setLoading(false)
+    } else {
+      setLoading(false)
+    }
   }, [])
 
   const adminLogin = async (username, password) => {
@@ -33,7 +38,11 @@ export function AdminAuthProvider({ children }) {
     setAdmin(null)
   }
 
-  return <Ctx.Provider value={{ admin, loading, adminLogin, adminLogout }}>{children}</Ctx.Provider>
+  return (
+    <Ctx.Provider value={{ admin, loading, adminLogin, adminLogout }}>
+      {children}
+    </Ctx.Provider>
+  )
 }
 
 export const useAdminAuth = () => useContext(Ctx)
