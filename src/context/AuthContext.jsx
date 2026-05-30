@@ -4,7 +4,7 @@ import api from '../utils/api'
 const Ctx = createContext(null)
 
 export function AuthProvider({ children }) {
-  const [user, setUser]       = useState(null)
+  const [user,    setUser]    = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -13,9 +13,14 @@ export function AuthProvider({ children }) {
       api.defaults.headers.common['Authorization'] = `Bearer ${tok}`
       api.get('/auth/me')
         .then(r => setUser(r.data.user))
-        .catch(() => { localStorage.removeItem('gv_token'); delete api.defaults.headers.common['Authorization'] })
+        .catch(() => {
+          localStorage.removeItem('gv_token')
+          delete api.defaults.headers.common['Authorization']
+        })
         .finally(() => setLoading(false))
-    } else setLoading(false)
+    } else {
+      setLoading(false)
+    }
   }, [])
 
   const login = useCallback(async (email, password) => {
@@ -42,11 +47,17 @@ export function AuthProvider({ children }) {
   }, [])
 
   const refreshUser = useCallback(async () => {
-    const { data } = await api.get('/auth/me')
-    setUser(data.user)
+    try {
+      const { data } = await api.get('/auth/me')
+      setUser(data.user)
+    } catch {}
   }, [])
 
-  return <Ctx.Provider value={{ user, loading, login, register, logout, refreshUser, setUser }}>{children}</Ctx.Provider>
+  return (
+    <Ctx.Provider value={{ user, loading, login, register, logout, refreshUser, setUser }}>
+      {children}
+    </Ctx.Provider>
+  )
 }
 
 export const useAuth = () => useContext(Ctx)
