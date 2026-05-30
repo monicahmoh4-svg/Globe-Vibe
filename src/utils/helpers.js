@@ -11,8 +11,8 @@ export const COUNTRIES = [
   {code:'ES',name:'Spain'},{code:'PT',name:'Portugal'},{code:'IE',name:'Ireland'},
   {code:'PH',name:'Philippines'},{code:'ID',name:'Indonesia'},{code:'SG',name:'Singapore'},
   {code:'ZW',name:'Zimbabwe'},{code:'CM',name:'Cameroon'},{code:'SN',name:'Senegal'},
-  {code:'CI',name:"Côte d'Ivoire"},{code:'TZ',name:'Tanzania'},{code:'MA',name:'Morocco'},
-  {code:'DZ',name:'Algeria'},{code:'ZA',name:'South Africa'},{code:'MZ',name:'Mozambique'},
+  {code:'MA',name:'Morocco'},{code:'MZ',name:'Mozambique'},{code:'TH',name:'Thailand'},
+  {code:'KR',name:'South Korea'},{code:'AR',name:'Argentina'},{code:'CO',name:'Colombia'},
 ]
 
 export const flag = code => {
@@ -24,18 +24,18 @@ export const flag = code => {
   } catch { return '🌍' }
 }
 
-export const fmtKES  = v  => `KES ${Number(v||0).toLocaleString('en-KE',{minimumFractionDigits:0,maximumFractionDigits:2})}`
-export const fmtDate = d  => new Date(d).toLocaleDateString('en-KE',{day:'numeric',month:'short',year:'numeric'})
-export const fmtTime = d  => new Date(d).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})
-export const formatTime = fmtTime  // alias used in ChatPage
+export const fmtKES      = v  => `KES ${Number(v||0).toLocaleString('en-KE',{minimumFractionDigits:0,maximumFractionDigits:2})}`
+export const fmtDate     = d  => new Date(d).toLocaleDateString('en-KE',{day:'numeric',month:'short',year:'numeric'})
+export const fmtTime     = d  => new Date(d).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})
+export const formatTime  = fmtTime   // alias
 
 export const timeAgo = d => {
   const s = Math.floor((Date.now() - new Date(d)) / 1000)
   if (s < 60)    return 'just now'
-  if (s < 3600)  return `${Math.floor(s/60)}m ago`
-  if (s < 86400) return `${Math.floor(s/3600)}h ago`
-  return `${Math.floor(s/86400)}d ago`
+  if (s < 3600)  return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86400)}d ago`
 }
 
-export const initials = n => (n||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()
-export const truncate = (s, n=60) => s?.length>n ? s.slice(0,n)+'…' : (s||'')
+export const initials = n => (n || '?').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
+export const truncate  = (s, n = 60) => s?.length > n ? s.slice(0, n) + '…' : (s || '')
